@@ -3,4 +3,3 @@ flat.json
 report/*.json
 images/*
 .DS_Store
-*.lp
