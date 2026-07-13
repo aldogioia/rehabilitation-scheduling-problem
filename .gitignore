@@ -4,3 +4,4 @@ report/*.json
 images/*
 .DS_Store
 encodings/facts/*
+*__pycache__

@@ -6,3 +6,7 @@ scikit-learn
 xgboost
 jupyter
 lightgbm
+clingo
+uvicorn
+fastapi
+pydantic
