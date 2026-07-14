@@ -1,40 +1,33 @@
-% --- METRICA A: Burden-Aware Risk Routing ---
-% Penalizzare l'assegnazione se il ML è incerto (ConfLevel >= 3) 
-% e l'operatore reale ha un burden score elevato (> 5).
-:~ assignment(OP, PAT, _, _), 
-   ml_capacity(OP, PredN, ConfLevel), 
-   ConfLevel >= 3,
-   operator_burden(OP, BurdenScore), 
-   BurdenScore > 5,
-   OP != -1. 
-   [BurdenScore@2, PAT, OP]
-
-% --- METRICA B: Buffer Contrattuale ---
-% Evitare assegnazioni a massima incertezza (Livello 4) per i part-time (TYP = 1).
-:~ assignment(OP, PAT, _, _),
-   ml_capacity(OP, PredN, 4),
-   operator(OP, _, 1, _, _, _, _, _, _, _, _, _, _, _, _),
-   OP != -1.
-   [10@3, PAT, OP]
-
-% --- METRICA C: Aderenza Predittiva ---
-% Calcoliamo il numero effettivo di pazienti assegnati all'operatore reale
+% Calcolo dinamico degli assegnamenti totali per operatore
 assigned_count(OP, Count) :- 
-    operator(OP, _, _, _, _, _, _, _, _, _, _, _, _, _, _), 
-    OP != -1,
+    operator(OP, _, _, _, _, _, _, _, _, _, _, _, _, _, _), OP != -1, 
     Count = #count{ PAT : assignment(OP, PAT, _, _) }.
 
-% Calcoliamo lo scostamento assoluto tra realtà e predizione del ML
-% solo quando il modello è sicuro (ConfLevel 1 o 2).
+% Calcolo dell'Overbooking (quanti pazienti in più rispetto alla predizione)
+overbooked(OP, Over) :- 
+    assigned_count(OP, Actual), 
+    ml_capacity(OP, PredN, _), 
+    Actual > PredN, 
+    Over = Actual - PredN.
+
+% --- METRICA A: COMPLESSITÀ CLINICA E BURDEN ---
+% Non penalizziamo ogni assegnamento, ma vietiamo di dare 
+% pazienti fisicamente complessi a operatori già esauriti.
+:~ assignment(OP, PAT, _, _), patient(PAT, _, _, 1, _), operator_burden(OP, Burden), Burden > 5, OP != -1. [Burden@3, PAT, OP]
+
+% --- METRICA B (V2): PROTEZIONE OVERBOOKING ASIMMETRICA ---
+% Invece di vietare gli assegnamenti base, penalizziamo in modo 
+% esponenziale solo l'ECCEDENZA (Overbooking) rispetto al ML per le categorie a rischio.
+:~ overbooked(OP, Over), operator(OP, _, 1, _, _, _, _, _, _, _, _, _, _, _, _). [Over*5@2, OP]
+:~ overbooked(OP, Over), operator_burden(OP, Burden), Burden > 5. [Over*Burden@2, OP]
+
+% --- METRICA C (V2): ADERENZA SCALATA SULLA CONFIDENZA ---
+% Lo scostamento dalla predizione (Delta) costa di più se 
+% il modello ML è estremamente sicuro (ConfLevel 1), costa meno se è incerto.
 diff(OP, Delta) :- 
-    assigned_count(OP, Actual),
-    ml_capacity(OP, PredN, ConfLevel),
-    ConfLevel <= 2,
+    assigned_count(OP, Actual), 
+    ml_capacity(OP, PredN, _), 
     Delta = |Actual - PredN|.
 
-% Penalizziamo lo scostamento per forzare l'aderenza del solver all'euristica predittiva.
-:~ diff(OP, Delta), Delta > 0, OP != -1.
-   [Delta@1, OP]
-
-% -------- DIRECTIVES --------
-#show assignment/4.
+:~ diff(OP, Delta), ml_capacity(OP, _, 1), Delta > 0, OP != -1. [Delta*3@1, OP]
+:~ diff(OP, Delta), ml_capacity(OP, _, 2), Delta > 0, OP != -1. [Delta*1@1, OP]
