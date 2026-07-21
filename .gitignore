@@ -2,6 +2,7 @@ flat.json
 *.venv
 report/*.json
 images/*
+*.pkl
 .DS_Store
 encodings/facts/*
 *__pycache__

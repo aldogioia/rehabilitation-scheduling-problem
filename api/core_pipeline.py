@@ -2,7 +2,7 @@ import joblib
 import pandas as pd
 import numpy as np
 import clingo
-from api.data_utils import process_raw_json, aggregate_to_operator_day, generate_physical_instance, generate_clingo_facts
+from utils.data_utils import process_raw_json, aggregate_to_operator_day, generate_physical_instance, generate_clingo_facts
 
 MODELS_PATH = "saved_models/best_quantiles_model.pkl"
 COLS_PATH = "saved_models/train_columns.pkl"
