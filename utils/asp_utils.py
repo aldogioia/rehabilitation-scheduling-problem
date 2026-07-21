@@ -183,6 +183,7 @@ def generate_ml_facts(data_input, target_date, output_filename):
     with open(output_filename, 'w') as f:
         f.write("\n".join(asp_lines))
 
+
 # =====================================================================
 # 3. GENERATORE PREDIZIONI ML (Invariato)
 # =====================================================================
@@ -223,3 +224,159 @@ def generate_clingo_facts(X_test, predictions_dict, original_ids, output_filenam
                 
     with open(output_filename, 'w') as f:
         f.write("\n".join(asp_lines))
+
+
+import json
+
+def generate_agenda_baseline_facts(board_assignment, data_input, target_date, output_filename=None):
+    """
+    Genera i fatti ASP per l'Agenda estraendo tutte le informazioni necessarie 
+    (pazienti, location, turni, indisponibilità e sessioni/agenda) dal dataset JSON.
+    """
+    if isinstance(data_input, str):
+        with open(data_input, 'r', encoding='utf-8') as f:
+            docs = json.load(f)
+    else:
+        docs = data_input
+        
+    docs = [docs] if isinstance(docs, dict) else docs
+    asp_lines = [f"% -------- FATTI BASELINE AGENDA: {target_date} --------\n"]
+    
+    for doc in docs:
+        planning_date = doc.get('planningDate', {}).get('$date', '')
+        if target_date not in planning_date:
+            continue
+            
+        # 1. PAZIENTI
+        asp_lines.append("% --- Pazienti ---")
+        patients = doc.get('patients', [])
+        for p in patients:
+            p_id = p.get('id')
+            autonomy = p.get('autonomy', p.get('aut', 0))
+            min_time = p.get('minTime', p.get('min', 0))
+            asp_lines.append(f"patient({p_id}, {autonomy}, {min_time}).")
+            
+        # 2. LOCATIONS
+        asp_lines.append("\n% --- Locations ---")
+        locations = doc.get('locations', doc.get('macroLocations', []))
+        for loc in locations:
+            l_id = loc.get('id')
+            cap = loc.get('capacity', loc.get('cap', 1))
+            per = loc.get('period', loc.get('per', 1))
+            sta = loc.get('start', loc.get('sta', 0)) // 10 if loc.get('start', 0) > 20 else loc.get('start', 0)
+            end = loc.get('end', loc.get('end', 144)) // 10 if loc.get('end', 144) > 20 else loc.get('end', 144)
+            asp_lines.append(f"location({l_id}, {cap}, {per}, {sta}, {end}).")
+            
+        # 3. TURNI OPERATORI (Period & Time)
+        asp_lines.append("\n% --- Turni Operatori ---")
+        shifts = doc.get('operatorShifts', doc.get('shifts', []))
+        for shift in shifts:
+            ope_id = shift.get('operatorId', shift.get('ope'))
+            per = shift.get('period', shift.get('per', 1))
+            sta = shift.get('start', shift.get('sta', 0)) // 10 if shift.get('start', 0) > 20 else shift.get('start', 0)
+            end = shift.get('end', shift.get('end', 0)) // 10 if shift.get('end', 0) > 20 else shift.get('end', 0)
+            
+            if ope_id is not None:
+                asp_lines.append(f"period({per}, {ope_id}, {sta}, {end}).")
+                asp_lines.append(f"time({per}, {ope_id}, {sta}..{end}).")
+
+        # 4. INDISPONIBILITÀ (Forbidden)
+        asp_lines.append("\n% --- Indisponibilità ---")
+        unavailabilities = doc.get('patientUnavailabilities', doc.get('forbidden', []))
+        for forb in unavailabilities:
+            pat_id = forb.get('patientId', forb.get('pat'))
+            per = forb.get('period', forb.get('per', 1))
+            sta = forb.get('start', forb.get('sta', 0)) // 10 if forb.get('start', 0) > 20 else forb.get('start', 0)
+            end = forb.get('end', forb.get('end', 0)) // 10 if forb.get('end', 0) > 20 else forb.get('end', 0)
+            
+            if pat_id is not None:
+                asp_lines.append(f"forbidden({pat_id}, {per}, {sta}, {end}).")
+
+        # 5. SESSIONI ED AGENDA REALIZZATA
+        asp_lines.append("\n% --- Sessioni e Agenda ---")
+        agenda = doc.get('agenda', [])
+        seen_sessions = set()
+        
+        for item in agenda:
+            sess = item.get('session', {})
+            pat = item.get('patient', {})
+            op = item.get('operator', {})
+            
+            if not sess or not pat:
+                continue
+                
+            sess_id = sess.get('id')
+            pat_id = pat.get('id')
+            op_id = op.get('id', -1)
+            
+            if sess_id not in seen_sessions:
+                seen_sessions.add(sess_id)
+                
+                min_len = sess.get('minLength', 60) // 10
+                duration = sess.get('duration', 60) // 10
+                loc_str = str(sess.get('location', '1')).strip()
+                loc = int(loc_str) if loc_str.isdigit() else 1
+                
+                # Fatto Sessione Baseline
+                asp_lines.append(f"session({sess_id}, {pat_id}, {min_len}, {loc}).")
+                
+                # Fatto Dettaglio Slot Temporale
+                start_slot = sess.get('timeStart', 0) // 10
+                period = 1 if item.get('period') == 'MORNING' else 2
+                asp_lines.append(f"agenda_slot({sess_id}, {start_slot}, {duration}, {period}).")
+            
+            # Assegnamento corrente
+            if op_id != -1:
+                asp_lines.append(f"agenda_assignment({op_id}, {pat_id}, {sess_id}).")
+
+    asp_content = "\n".join(asp_lines)
+    
+    if output_filename:
+        with open(output_filename, 'w', encoding='utf-8') as f:
+            f.write(asp_content)
+            
+    return asp_content
+
+
+def generate_board_assignment_facts(board_assignments, output_filename=None):
+    """
+    Genera i fatti ASP relativi esclusivamente alle sessioni e agli 
+    assegnamenti predetti/calcolati dalla fase di Board.
+    """
+    asp_lines = ["% -------- FATTI GENERATI DALLA FASE DI BOARD --------\n"]
+    
+    for idx, assignment in enumerate(board_assignments):
+        ses_id = assignment.get('session_id', idx)
+        pat = assignment.get('patient_id')
+        ope = assignment.get('operator_id')
+        loc = assignment.get('macro_location_id', assignment.get('location', 1))
+        typ = assignment.get('type', 0)
+        
+        # Gestione conversioni unità temporali se espresse in minuti
+        min_len = assignment.get('min_len', 60)
+        if min_len > 20:
+            min_len = min_len // 10
+            
+        ideal_len = assignment.get('ideal_len', min_len)
+        if ideal_len > 20:
+            ideal_len = ideal_len // 10
+            
+        per = assignment.get('period', 1)
+        tim = assignment.get('time_ideal', 0)
+        opt = assignment.get('optional', 0)
+        pri = assignment.get('priority', 1)
+        
+        # Fatti di sessione estesi generati dal Board
+        asp_lines.append(f"session({ses_id}, {pat}, {ope}, {loc}, {typ}, {min_len}, {ideal_len}, {per}, {tim}, {opt}, {pri}).")
+        asp_lines.append(f"sessionLocation({ses_id}, {loc}, {loc}).")
+        
+        if ope is not None and ope != -1:
+            asp_lines.append(f"board_assignment({ope}, {pat}, {ses_id}).")
+            
+    asp_content = "\n".join(asp_lines)
+    
+    if output_filename:
+        with open(output_filename, 'w', encoding='utf-8') as f:
+            f.write(asp_content)
+            
+    return asp_content
