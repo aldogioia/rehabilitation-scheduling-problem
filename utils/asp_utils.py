@@ -226,13 +226,7 @@ def generate_clingo_facts(X_test, predictions_dict, original_ids, output_filenam
         f.write("\n".join(asp_lines))
 
 
-import json
-
-def generate_agenda_baseline_facts(board_assignment, data_input, target_date, output_filename=None):
-    """
-    Genera i fatti ASP per l'Agenda estraendo tutte le informazioni necessarie 
-    (pazienti, location, turni, indisponibilità e sessioni/agenda) dal dataset JSON.
-    """
+def generate_agenda_final_facts(board_assignments, data_input, target_date, output_filename=None):
     if isinstance(data_input, str):
         with open(data_input, 'r', encoding='utf-8') as f:
             docs = json.load(f)
@@ -240,101 +234,107 @@ def generate_agenda_baseline_facts(board_assignment, data_input, target_date, ou
         docs = data_input
         
     docs = [docs] if isinstance(docs, dict) else docs
-    asp_lines = [f"% -------- FATTI BASELINE AGENDA: {target_date} --------\n"]
+    asp_lines = [f"% -------- FATTI AGENDA: {target_date} --------\n"]
     
+    def time_to_slot(t_str):
+        if not t_str or not isinstance(t_str, str): return None
+        try:
+            h, m = map(int, t_str.split(':'))
+            return (h * 60 + m) // 10
+        except:
+            return None
+
+    # Creiamo un dizionario veloce per mappare il paziente/sessione all'operatore predetto dal ML
+    # key: patient_id (o session_id), value: operator_id
+    ml_op_map = {ass['patient_id']: ass['operator_id'] for ass in board_assignments}
+
     for doc in docs:
         planning_date = doc.get('planningDate', {}).get('$date', '')
         if target_date not in planning_date:
             continue
             
+        board = doc.get('board', [])
+        unassigned = doc.get('unassignedPatients', [])
+        agenda = doc.get('agenda', [])
+        
         # 1. PAZIENTI
         asp_lines.append("% --- Pazienti ---")
-        patients = doc.get('patients', [])
-        for p in patients:
-            p_id = p.get('id')
-            autonomy = p.get('autonomy', p.get('aut', 0))
-            min_time = p.get('minTime', p.get('min', 0))
-            asp_lines.append(f"patient({p_id}, {autonomy}, {min_time}).")
-            
+        pat_dict = {p.get('id'): p for p in doc.get('patients', []) + unassigned}
+        for op in board:
+            for p in op.get('patients', []):
+                pat_dict[p.get('id')] = p
+                
+        for p_id, p in pat_dict.items():
+            if p_id is None: continue
+            aut = 1 if p.get('autonomous', False) else 0
+            min_time = p.get('overallMinLength', 60) // 10
+            asp_lines.append(f"patient({p_id}, {aut}, {min_time}).")
+
         # 2. LOCATIONS
         asp_lines.append("\n% --- Locations ---")
-        locations = doc.get('locations', doc.get('macroLocations', []))
-        for loc in locations:
-            l_id = loc.get('id')
-            cap = loc.get('capacity', loc.get('cap', 1))
-            per = loc.get('period', loc.get('per', 1))
-            sta = loc.get('start', loc.get('sta', 0)) // 10 if loc.get('start', 0) > 20 else loc.get('start', 0)
-            end = loc.get('end', loc.get('end', 144)) // 10 if loc.get('end', 144) > 20 else loc.get('end', 144)
-            asp_lines.append(f"location({l_id}, {cap}, {per}, {sta}, {end}).")
-            
-        # 3. TURNI OPERATORI (Period & Time)
-        asp_lines.append("\n% --- Turni Operatori ---")
-        shifts = doc.get('operatorShifts', doc.get('shifts', []))
-        for shift in shifts:
-            ope_id = shift.get('operatorId', shift.get('ope'))
-            per = shift.get('period', shift.get('per', 1))
-            sta = shift.get('start', shift.get('sta', 0)) // 10 if shift.get('start', 0) > 20 else shift.get('start', 0)
-            end = shift.get('end', shift.get('end', 0)) // 10 if shift.get('end', 0) > 20 else shift.get('end', 0)
-            
-            if ope_id is not None:
-                asp_lines.append(f"period({per}, {ope_id}, {sta}, {end}).")
-                asp_lines.append(f"time({per}, {ope_id}, {sta}..{end}).")
+        macro_locs = doc.get('macroLocations', doc.get('locations', []))
+        for m_loc in macro_locs:
+            for loc in m_loc.get('locations', [m_loc]):
+                l_id = str(loc.get('id', '1')).lower().replace('-', '_')
+                cap_arr = loc.get('capacity', [1, 1])
+                cap_morn = cap_arr[0] if isinstance(cap_arr, list) and len(cap_arr) > 0 else 1
+                cap_aft = cap_arr[1] if isinstance(cap_arr, list) and len(cap_arr) > 1 else 1
+                if cap_morn == 0: cap_morn = 5 
+                if cap_aft == 0: cap_aft = 5
+                
+                asp_lines.append(f"location({l_id}, {cap_morn}, 1, 0, 72).")
+                asp_lines.append(f"location({l_id}, {cap_aft}, 2, 72, 144).")
 
-        # 4. INDISPONIBILITÀ (Forbidden)
-        asp_lines.append("\n% --- Indisponibilità ---")
-        unavailabilities = doc.get('patientUnavailabilities', doc.get('forbidden', []))
-        for forb in unavailabilities:
-            pat_id = forb.get('patientId', forb.get('pat'))
-            per = forb.get('period', forb.get('per', 1))
-            sta = forb.get('start', forb.get('sta', 0)) // 10 if forb.get('start', 0) > 20 else forb.get('start', 0)
-            end = forb.get('end', forb.get('end', 0)) // 10 if forb.get('end', 0) > 20 else forb.get('end', 0)
-            
-            if pat_id is not None:
-                asp_lines.append(f"forbidden({pat_id}, {per}, {sta}, {end}).")
-
-        # 5. SESSIONI ED AGENDA REALIZZATA
-        asp_lines.append("\n% --- Sessioni e Agenda ---")
-        agenda = doc.get('agenda', [])
+        # 3. SESSIONI ED ASSEGNAMENTI (Arity 11)
+        asp_lines.append("\n% --- Sessioni (Arity 11) ---")
         seen_sessions = set()
-        
         for item in agenda:
             sess = item.get('session', {})
             pat = item.get('patient', {})
-            op = item.get('operator', {})
+            if not sess or not pat: continue
             
-            if not sess or not pat:
-                continue
-                
             sess_id = sess.get('id')
             pat_id = pat.get('id')
-            op_id = op.get('id', -1)
+            if sess_id is None or pat_id is None or sess_id in seen_sessions: continue
+            seen_sessions.add(sess_id)
             
-            if sess_id not in seen_sessions:
-                seen_sessions.add(sess_id)
-                
-                min_len = sess.get('minLength', 60) // 10
-                duration = sess.get('duration', 60) // 10
-                loc_str = str(sess.get('location', '1')).strip()
-                loc = int(loc_str) if loc_str.isdigit() else 1
-                
-                # Fatto Sessione Baseline
-                asp_lines.append(f"session({sess_id}, {pat_id}, {min_len}, {loc}).")
-                
-                # Fatto Dettaglio Slot Temporale
-                start_slot = sess.get('timeStart', 0) // 10
-                period = 1 if item.get('period') == 'MORNING' else 2
-                asp_lines.append(f"agenda_slot({sess_id}, {start_slot}, {duration}, {period}).")
+            # Qui iniettiamo l'operatore predetto dal ML! Se non c'è, mettiamo -1.
+            op_id = ml_op_map.get(pat_id, -1)
             
-            # Assegnamento corrente
-            if op_id != -1:
-                asp_lines.append(f"agenda_assignment({op_id}, {pat_id}, {sess_id}).")
+            loc_str = str(sess.get('location', '1')).strip().lower().replace('-', '_')
+            loc = loc_str if loc_str else "1"
+            typ = sess.get('type', 0)
+            min_len = sess.get('minLength', 60) // 10
+            ideal_len = sess.get('idealLength', 60) // 10
+            per = 1 if sess.get('idealPeriod') == 'MORNING' else 0 # Gestisci mappatura periodi se necessaria
+            tim = (sess.get('idealTime', 0) or 0) // 10
+            opt = 1 if sess.get('optional', False) else 0
+            pri = pat.get('category', {}).get('priority', 1)
+            
+            asp_lines.append(f"session({sess_id}, {pat_id}, {op_id}, {loc}, {typ}, {min_len}, {ideal_len}, {per}, {tim}, {opt}, {pri}).")
+            
+            # Generiamo direttamente sessionLocation (Arity 3) come fa il prof
+            mac = str(item.get('macroLocationId', loc)).lower().replace('-', '_')
+            asp_lines.append(f"sessionLocation({sess_id}, {loc}, {mac}).")
+
+        # 4. TURNI OPERATORI
+        asp_lines.append("\n% --- Turni Operatori ---")
+        for op in board:
+            op_id = op.get('id')
+            if op_id is None: continue
+            opt_times = op.get('operatingTimes', [])
+            for idx, period_data in enumerate(opt_times):
+                per = idx + 1
+                sta = time_to_slot(period_data.get('start'))
+                end = time_to_slot(period_data.get('end'))
+                if sta is not None and end is not None and end > sta:
+                    asp_lines.append(f"period({per}, {op_id}, {sta}, {end}).")
+                    asp_lines.append(f"time({per}, {op_id}, {sta}..{end-1}).")
 
     asp_content = "\n".join(asp_lines)
-    
     if output_filename:
         with open(output_filename, 'w', encoding='utf-8') as f:
             f.write(asp_content)
-            
     return asp_content
 
 
