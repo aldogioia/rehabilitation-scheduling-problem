@@ -23,7 +23,7 @@ def generate_board_baseline_facts(data_input, target_date, output_filename):
         unassigned = doc.get('unassignedPatients', [])
         agenda = doc.get('agenda', [])
         
-        # --- OPERATORI (Arità 15) ---
+        # --- OPERATORI ---
         asp_lines.append("\n% --- Operatori ---")
         for op in board:
             op_id = op.get('id')
@@ -68,7 +68,7 @@ def generate_board_baseline_facts(data_input, target_date, output_filename):
             
             asp_lines.append(f"patient({pat_id}, {p_type}, {is_paying}, {needs_aid}, {min_len}).")
             
-            # Preferenze esplicite (PREF=1)
+            # Preferenze esplicite
             pref_ops_raw = pat.get('preferredOps', [])
             preferred_set = set()
             for weight, ops_group in enumerate(pref_ops_raw):
@@ -101,7 +101,10 @@ def generate_board_baseline_facts(data_input, target_date, output_filename):
             min_len = sess.get('minLength', 60) // 10
             loc_str = str(sess.get('location', '1')).strip()
             loc = loc_str if loc_str.isdigit() else 1 
+            typ = sess.get('type', 0)
             
+            
+            asp_lines.append(f"session({sess_id}, {pat_id}, {min_len}, {loc}, {typ}).")
             asp_lines.append(f"session({sess_id}, {pat_id}, {min_len}, {loc}).")
 
     if output_filename:

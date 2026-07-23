@@ -1,11 +1,16 @@
 % FASE 1: CHOICE RULE ORIGINALE E VINCOLI FISICI
 1 {assignment(OP, PAT, W, PREF) : operator(OP,_,_,_,_,_,_,_,_,_,_,_,_,_,_), pref(OP, PAT, W, PREF)} 1 :- patient(PAT,_,_,_,_).
 
-uniqueLocationLength(OP, PAT, L) :- operator(OP,_,_,_,_,_,_,_,_,_,_,_,_,_,_), patient(PAT,_,_,_,L), assignment(OP,PAT,_,_), session(_,PAT,_,LOC), #count{ID : patient(ID,_,_,_,_), session(_,ID,_,LOC), assignment(OP,ID,_,_)} < 2.
-sameLocationLength(OP, PAT, L) :- operator(OP,_,_,_,_,_,_,_,_,_,_,_,_,_,_), patient(PAT,_,_,_,_), assignment(OP,PAT,_,_), session(_,PAT,L,LOC), #count{ID : patient(ID,_,_,_,_), session(_,ID,_,LOC), assignment(OP,ID,_,_)} > 1.
+% 1. Se la sessione non è di gruppo, il medico consuma esattamente 
+% la lunghezza (L) richiesta da quel paziente.
+sameLocationLength(OP, PAT, L) :- assignment(OP, PAT, _, _), patient(PAT, _, _, _, L), session(_, PAT, _, _, TYP), TYP != 2.
 
-% Hard limit invalicabile: mai superare il 100% della capacità teorica
-:- operator(OP,MAX,_,_,_,_,_,_,_,_,_,_,_,_,_), #sum{U, PAT : uniqueLocationLength(OP, PAT, U); S, PAT : sameLocationLength(OP, PAT, S)} > MAX.
+% 2. Tempo di Gruppo: Se la sessione è di gruppo, il medico consuma il tempo 
+% una volta sola, pari alla durata MASSIMA tra i pazienti del gruppo.
+uniqueLocationLength(OP, LOC, MAX_L) :- assignment(OP, _, _, _), session(_, _, _, LOC, 2), MAX_L = #max{L, PAT : assignment(OP, PAT, _, _), patient(PAT, _, _, _, L), session(_, PAT, _, LOC, 2)}.
+
+% Hard limit invalicabile: La somma dei tempi individuali + tempi di gruppo non supera il MAX.
+:- operator(OP,MAX,_,_,_,_,_,_,_,_,_,_,_,_,_), OP != -1, #sum{L, PAT : sameLocationLength(OP, PAT, L); GL, LOC : uniqueLocationLength(OP, LOC, GL)} > MAX.
 :- operator(OP,_,_,MAX,_,_,_,_,_,_,_,_,_,_,_), #count{PAT : assignment(OP,PAT,_,_)} > MAX.
 
 % Distribuzioni eque per tipologia clinica (Mantiene l'equilibrio del reparto)
