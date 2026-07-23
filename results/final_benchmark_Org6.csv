@@ -1,0 +1,4 @@
+Data,Pazienti_Totali,Tempo_Board_Base_s,Tempo_Board_ML_s,Tempo_Agenda_Base_s,Tempo_Agenda_ML_s,Pazienti_Spostati_ML,Terra_Board_Base,Terra_Board_ML,Terra_Agenda_Base,Terra_Agenda_ML
+2023-01-02,89,1.559,0.13,38.068,14.05,82,0,0,0,0
+2023-01-03,61,0.496,0.107,35.588,35.695,54,0,0,0,0
+2023-01-04,96,2.054,0.11,36.288,38.118,91,0,0,0,0

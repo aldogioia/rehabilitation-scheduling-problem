@@ -7,9 +7,6 @@ xgboost
 jupyter
 lightgbm
 clingo
-uvicorn
-fastapi
-pydantic
 tabpfn
 optuna
 torch
