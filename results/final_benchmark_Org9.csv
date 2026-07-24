@@ -1,4 +1,2 @@
-Data,Pazienti_Totali,Tempo_Board_Base_s,Tempo_Board_ML_s,Agenda_Base_Status,Agenda_ML_Status,Pazienti_Spostati_ML,Continuità_assistenziale_Base,Continuità_assistenziale_ML,Terra_Board_Base,Terra_Board_ML,Terra_Agenda_Base,Terra_Agenda_ML
-2023-01-02,43,0.135,0.121,UNSAT,TIMEOUT,41,0.0,0.0,0,0,0,0
-2023-01-03,48,0.22,13.252,UNSAT,TIMEOUT,46,4.166666666666666,47.91666666666667,0,0,0,0
-2023-01-04,52,0.227,0.038,UNSAT,TIMEOUT,50,1.9230769230769231,67.3076923076923,0,0,0,0
+Data,Pazienti_Totali,Tempo_Board_Base_s,Tempo_Board_ML_s,Tempo_Agenda_Base_s,Tempo_Agenda_ML_s,Pazienti_Spostati_ML,Continuità_assistenziale_Base,Continuità_assistenziale_ML,Terra_Board_Base,Terra_Board_ML,Agenda_Base_Status,Agenda_ML_Status,Terra_Agenda_Base,Terra_Agenda_ML
+2023-01-03,48,0.215,20.008,0.262,0.27,44,4.167,52.083,0,0,UNSAT,UNSAT,0,0

@@ -85,7 +85,7 @@ def generate_board_baseline_facts(data_input, target_date, output_filename):
                 if op_id not in preferred_set and op_id is not None:
                     asp_lines.append(f"pref({op_id}, {pat_id}, 10, 0).")
 
-        # --- SESSIONI BASE (Per calcolo overlap nel Board) ---
+        # --- SESSIONI BASE ---
         asp_lines.append("\n% --- Sessioni Base ---")
         seen_sessions = set()
         for item in agenda:
@@ -273,3 +273,70 @@ def generate_agenda_facts(board_assignments, data_input, target_date, output_fil
         with open(output_filename, 'w', encoding='utf-8') as f:
             f.write("\n".join(asp_lines))
     return asp_lines
+
+def split_assignments_by_period(board_assignments, json_path, target_date):
+    """
+    Legge il JSON per estrarre la capacità mattutina/pomeridiana dei medici 
+    e la preferenza dei pazienti, smistando gli assegnamenti in due liste.
+    """
+    import json
+    import pandas as pd
+    
+    # Inizializziamo i due secchielli
+    ass_mattina = []
+    ass_pomeriggio = []
+    
+    # 1. Carica il JSON per capire turni medici e preferenze pazienti
+    with open(json_path, 'r', encoding='utf-8') as f:
+        docs = json.load(f)
+        if isinstance(docs, dict): docs = [docs]
+        
+    doc_giorno = next((d for d in docs if target_date in d.get('planningDate', {}).get('$date', '')), None)
+    if not doc_giorno:
+        return board_assignments, [] # Fallback
+        
+    # Mappiamo le preferenze dei pazienti (1 = Mattina, 2 = Pomeriggio, 0 = Flessibile)
+    pat_prefs = {}
+    for item in doc_giorno.get('agenda', []):
+        pat_id = item.get('patient', {}).get('id')
+        period = item.get('session', {}).get('periodIdeal', 0)
+        if pat_id:
+            pat_prefs[pat_id] = period
+
+    # Mappiamo il "peso" temporale di ogni medico (quanti pazienti flessibili ha già per turno)
+    # Per semplicità, contiamo solo il numero di pazienti assegnati a quel turno
+    op_load_morning = {op.get('id'): 0 for op in doc_giorno.get('board', [])}
+    op_load_afternoon = {op.get('id'): 0 for op in doc_giorno.get('board', [])}
+
+    # 2. Smistamento Pazienti Fissi
+    flessibili = []
+    for ass in board_assignments:
+        pat = ass['patient_id']
+        op = ass['operator_id']
+        
+        if op == -1:
+            continue # I pazienti a terra li ignoriamo qui
+            
+        pref = pat_prefs.get(pat, 0)
+        
+        if pref == 1:
+            ass_mattina.append(ass)
+            op_load_morning[op] = op_load_morning.get(op, 0) + 1
+        elif pref == 2:
+            ass_pomeriggio.append(ass)
+            op_load_afternoon[op] = op_load_afternoon.get(op, 0) + 1
+        else:
+            flessibili.append(ass)
+
+    # 3. Smistamento Pazienti Flessibili (Bilanciamento)
+    for ass in flessibili:
+        op = ass['operator_id']
+        # Assegna al turno dove il medico ha meno carico attuale
+        if op_load_morning.get(op, 0) <= op_load_afternoon.get(op, 0):
+            ass_mattina.append(ass)
+            op_load_morning[op] = op_load_morning.get(op, 0) + 1
+        else:
+            ass_pomeriggio.append(ass)
+            op_load_afternoon[op] = op_load_afternoon.get(op, 0) + 1
+            
+    return ass_mattina, ass_pomeriggio

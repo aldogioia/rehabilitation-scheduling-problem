@@ -17,20 +17,20 @@ def generate_rich_link_dataset(json_paths, negative_ratio=2, random_seed=42):
             if isinstance(docs, dict): docs = [docs]
             all_docs.extend(docs)
             
-    # 1. ORDINAMENTO CRONOLOGICO (Cruciale per non barare sullo storico)
+    # 1. ORDINAMENTO CRONOLOGICO
     def get_date(d):
         pd_str = d.get('planningDate', {}).get('$date')
         return pd.to_datetime(pd_str).tz_localize(None) if pd_str else pd.Timestamp.min
         
     all_docs.sort(key=get_date)
     
-    # REGISTRO STORICO GLOBALE (Si aggiorna man mano che passano i giorni)
-    # pair_history[patient_id][operator_id] = numero_di_sedute_passate
+    # REGISTRO STORICO GLOBALE
     pair_history = defaultdict(lambda: defaultdict(int))
     
     for doc in all_docs:
         planning_date_str = doc.get('planningDate', {}).get('$date')
-        if not planning_date_str or not doc.get('agenda'):
+        agenda = doc.get('agenda', [])
+        if not planning_date_str or not agenda:
             continue
         
         planning_date = pd.to_datetime(planning_date_str).tz_localize(None)
@@ -38,16 +38,29 @@ def generate_rich_link_dataset(json_paths, negative_ratio=2, random_seed=42):
         unassigned = doc.get('unassignedPatients', [])
         
         all_pats = unassigned + [p for op in board for p in op.get('patients', [])]
-        total_ops = len(board)
-        total_pats = len(all_pats)
         
+        # --- NUOVO: ESTRAZIONE INFO SESSIONE DALL'AGENDA ---
+        # Mappiamo l'ID del paziente ai dettagli della sua sessione odierna
+        pat_session_info = {}
+        for item in agenda:
+            sess = item.get('session', {})
+            pat = item.get('patient', {})
+            if not sess or not pat: continue
+            
+            p_id = pat.get('id')
+            if p_id is not None:
+                loc_str = str(sess.get('location', '1')).strip()
+                pat_session_info[p_id] = {
+                    'sess_type': sess.get('type', 0), # 0=Individuale, 2=Gruppo, ecc.
+                    'sess_length': sess.get('minLength', 60),
+                    'sess_location': int(loc_str) if loc_str.isdigit() else 1
+                }
+
         # --- FEATURE CONTESTUALE: PRESSIONE CLINICA ---
-        # Contiamo quanti pazienti ci sono per ogni tipologia oggi
         pat_type_counts = defaultdict(int)
         for p in all_pats:
             pat_type_counts[p.get('type', 'Unknown')] += 1
             
-        # Contiamo quanti operatori hanno quella specifica qualifica in turno oggi
         op_qual_counts = defaultdict(int)
         active_operators = {}
         for op in board:
@@ -90,16 +103,21 @@ def generate_rich_link_dataset(json_paths, negative_ratio=2, random_seed=42):
         for pat_id, pat in patients_info.items():
             pat_type = pat.get('type', 'Unknown')
             needs_lifter = 1 if str(pat.get('aidNeeds', '')).lower() not in ['none', 'null', '', 'false'] else 0
-            min_len = pat.get('overallMinLength', 60)
             
-            # Calcolo Pressione: Pazienti di tipo X / Operatori con qualifica X
+
+            # Fallback ai valori base del paziente se non si trova l'agenda (raro ma sicuro)
+            s_info = pat_session_info.get(pat_id, {})
+            sess_type = s_info.get('sess_type', 0)
+            sess_length = s_info.get('sess_length', pat.get('overallMinLength', 60))
+            sess_location = s_info.get('sess_location', 1)
+            
+            # Calcolo Pressione
             pats_of_type = pat_type_counts.get(pat_type, 0)
             ops_with_qual = op_qual_counts.get(pat_type, 0)
             type_pressure = (pats_of_type / ops_with_qual) if ops_with_qual > 0 else pats_of_type
             
             assigned_ops = [op for p, op in positive_links if p == pat_id]
             
-            # Identificazione turni in cui il paziente è stato trattato
             active_shifts_for_pat = set()
             for assigned_op in assigned_ops:
                 if assigned_op in active_operators:
@@ -111,7 +129,6 @@ def generate_rich_link_dataset(json_paths, negative_ratio=2, random_seed=42):
                 if op_id in assigned_ops: continue
                 if pat_type not in op_data['quals']: continue
                 
-                # Time-aware: pesca solo medici dello stesso turno
                 op_shifts = set()
                 if op_data['op_is_morning']: op_shifts.add('M')
                 if op_data['op_is_afternoon']: op_shifts.add('A')
@@ -126,8 +143,6 @@ def generate_rich_link_dataset(json_paths, negative_ratio=2, random_seed=42):
             
             for op_id, label in all_pairs:
                 op_data = active_operators[op_id]
-                
-                # ESTRAZIONE STORICO DAL REGISTRO GIOBALE
                 hist_count = pair_history[pat_id][op_id]
                 
                 dataset_rows.append({
@@ -135,17 +150,23 @@ def generate_rich_link_dataset(json_paths, negative_ratio=2, random_seed=42):
                     'patient_id': pat_id,
                     'operator_id': op_id,
                     
+                    # Dati Paziente
                     'pat_type': pat_type,
                     'pat_needs_lifter': needs_lifter,
-                    'pat_min_length': min_len,
                     
+                    # Dati Sessione
+                    'sess_type': sess_type,
+                    'sess_length': sess_length,
+                    'sess_location': sess_location,
+                    
+                    # Dati Operatore
                     'op_burdenScore': op_data['op_burdenScore'],
                     'op_effectiveTime': op_data['op_effectiveTime'],
                     'op_qual_count': op_data['op_qual_count'],
                     'op_is_morning': op_data['op_is_morning'],
                     'op_is_afternoon': op_data['op_is_afternoon'],
                     
-                    # --- NUOVE FEATURE SUPER-PREDITTIVE ---
+                    # Dati Relazionali / Contesto
                     'type_pressure': type_pressure,
                     'historical_pair_count': hist_count,
                     
@@ -153,8 +174,7 @@ def generate_rich_link_dataset(json_paths, negative_ratio=2, random_seed=42):
                     'link_label': label 
                 })
         
-        # 3. AGGIORNAMENTO DEL REGISTRO STORICO (Solo ALLA FINE della giornata)
-        # In questo modo, l'assegnazione di oggi sarà disponibile come "storia" solo da domani!
+        # 3. AGGIORNAMENTO DEL REGISTRO STORICO
         for pat_id, op_id in positive_links:
             pair_history[pat_id][op_id] += 1
 

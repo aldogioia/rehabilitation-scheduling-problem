@@ -50,3 +50,4 @@ ses_each_hour(ID,OP,PL,PER,TS..TS+L-1) :- session(ID,_,OP,_,_,_,_,_,_,_,_), sess
 #show start/3.
 #show length/3.
 #show sessionLocation/3.
+#show session/11.
