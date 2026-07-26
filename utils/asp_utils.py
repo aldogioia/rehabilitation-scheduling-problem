@@ -58,6 +58,7 @@ def generate_board_baseline_facts(data_input, target_date, output_filename):
             if pat_id in seen_pats or pat_id is None: continue
             seen_pats.add(pat_id)
             
+            # ESTRAZIONE PAZIENTI
             p_type_str = pat.get('type', '')
             type_map = {'N': 1, 'O': 2, 'A': 3, 'CP': 4, 'CN': 5, 'MAC': 6}
             p_type = type_map.get(p_type_str, 1)
@@ -68,24 +69,31 @@ def generate_board_baseline_facts(data_input, target_date, output_filename):
             
             asp_lines.append(f"patient({pat_id}, {p_type}, {is_paying}, {needs_aid}, {min_len}).")
             
-            # Preferenze esplicite
+            # ESTRAZIONE PREFERENZE
+            asp_lines.append(f"pref(-1, {pat_id}, 10, 1).")
+            
             pref_ops_raw = pat.get('preferredOps', [])
             preferred_set = set()
+            
+            # 1. Operatori esplicitamente preferiti (Peso da 0 a salire)
             for weight, ops_group in enumerate(pref_ops_raw):
                 if isinstance(ops_group, list):
                     for pref_op_id in ops_group:
                         preferred_set.add(pref_op_id)
-                        asp_lines.append(f"pref({pref_op_id}, {pat_id}, {weight + 1}, 1).")
-                        
-            asp_lines.append(f"pref(-1, {pat_id}, 10, 1).")
+                        asp_lines.append(f"pref({pref_op_id}, {pat_id}, {weight}, 1).")
             
-            # Non-preferiti per la baseline (PREF=0)
+            # 2. Operatori neutri
             for op in board:
                 op_id = op.get('id')
-                if op_id not in preferred_set and op_id is not None:
-                    asp_lines.append(f"pref({op_id}, {pat_id}, 10, 0).")
+                op_quals = op.get('qualifications', [])
+                
+                if p_type_str and p_type_str not in op_quals:
+                    continue
+                    
+                if op_id is not None and op_id not in preferred_set:
+                    asp_lines.append(f"pref({op_id}, {pat_id}, 1, 1).")
 
-        # --- SESSIONI BASE (Per calcolo overlap nel Board) ---
+        # --- SESSIONI BASE ---
         asp_lines.append("\n% --- Sessioni Base ---")
         seen_sessions = set()
         for item in agenda:
@@ -266,8 +274,8 @@ def generate_agenda_facts(board_assignments, data_input, target_date, output_fil
             
             asp_lines.append(f"session({sess_id}, {pat_id}, {op_id}, {loc}, {typ}, {min_len}, {ideal_len}, {per}, {tim}, {opt}, {pri}).")
             
-            mac = str(item.get('macroLocationId', loc)).lower().replace('-', '_')
-            asp_lines.append(f"sessionLocation({sess_id}, {loc}, {mac}).")
+            # mac = str(item.get('macroLocationId', loc)).lower().replace('-', '_')
+            # asp_lines.append(f"sessionLocation({sess_id}, {loc}, {mac}).")
 
     if output_filename:
         with open(output_filename, 'w', encoding='utf-8') as f:
