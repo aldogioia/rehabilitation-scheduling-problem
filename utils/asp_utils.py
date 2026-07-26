@@ -274,8 +274,8 @@ def generate_agenda_facts(board_assignments, data_input, target_date, output_fil
             
             asp_lines.append(f"session({sess_id}, {pat_id}, {op_id}, {loc}, {typ}, {min_len}, {ideal_len}, {per}, {tim}, {opt}, {pri}).")
             
-            # mac = str(item.get('macroLocationId', loc)).lower().replace('-', '_')
-            # asp_lines.append(f"sessionLocation({sess_id}, {loc}, {mac}).")
+            mac = str(item.get('macroLocationId', loc)).lower().replace('-', '_')
+            asp_lines.append(f"sessionLocation({sess_id}, {loc}, {mac}).")
 
     if output_filename:
         with open(output_filename, 'w', encoding='utf-8') as f:
