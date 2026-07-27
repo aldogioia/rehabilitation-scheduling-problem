@@ -54,8 +54,10 @@ uniqueLocationLength(OP, LOC, MAX_L) :- assignment(OP, _, _, _), session(_, _, _
 % 3. Ottimizzazione Machine Learning
 :~ assignment(OP, PAT, _, _), ml_link(OP, PAT, AFF, _), OP != -1. [(100 - AFF) / 10 @ 3, OP, PAT]
 
-% 4. Regole originali della Baseline
-:~ #sum{W, PAT : assignment(_,PAT,W,1)} = N. [N@2]
-:~ #sum{W, PAT: assignment(_, PAT, W, 0)} = N. [N@1]
+% 4. Regole delle preferenze (disabilitate quando la confidenza ML è alta: CONF <= 2)
+ml_high_confidence(OP, PAT) :- ml_link(OP, PAT, _, CONF), CONF <= 2.
+
+:~ assignment(OP, PAT, W, 1), not ml_high_confidence(OP, PAT), OP != -1. [W@2, OP, PAT]
+:~ assignment(OP, PAT, W, 0), not ml_high_confidence(OP, PAT), OP != -1. [W@1, OP, PAT]
 
 #show assignment/4.
