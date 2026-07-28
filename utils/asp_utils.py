@@ -29,20 +29,33 @@ def generate_board_baseline_facts(data_input, target_date, output_filename):
             op_id = op.get('id')
             eff_time = op.get('effectiveTime', 0) // 10
             is_pt = 1 if 'part-time' in str(op.get('jobKind', '')).lower() else 0
-            max_pats = (eff_time // 3) if eff_time > 0 else 10 
+            
+            # [FIX 1] Allineamento TU corretto (assumendo media paziente 6 TU)
+            max_pats = max(1, eff_time // 6) if eff_time > 0 else 10 
             
             quals = op.get('qualifications', [])
-            limit_n = max_pats if 'N' in quals else 0
-            limit_o = max_pats if 'O' in quals else 0
-            limit_cp = max_pats if 'CP' in quals else 0
-            limit_cn = max_pats if 'CN' in quals else 0
-            limit_mac = max_pats if 'MAC' in quals else 0
+            
+            # [FIX 2] Matrice delle Capacità Granulare (Simulazione dati prof)
+            # Diamo pesi distribuiti per forzare il 'Fair Distribution'
+            l_nlp = max(1, int(max_pats * 0.4)) if 'N' in quals else 0
+            l_nl  = max(1, int(max_pats * 0.6)) if 'N' in quals else 0
+            l_n   = max(1, int(max_pats * 0.8)) if 'N' in quals else 0
+            l_np  = max(1, int(max_pats * 0.4)) if 'N' in quals else 0
+            
+            l_olp = max(1, int(max_pats * 0.4)) if 'O' in quals else 0
+            l_ol  = max(1, int(max_pats * 0.6)) if 'O' in quals else 0
+            l_o   = max(1, int(max_pats * 0.8)) if 'O' in quals else 0
+            l_op  = max(1, int(max_pats * 0.4)) if 'O' in quals else 0
+            
+            l_cp = max_pats if 'CP' in quals else 0
+            l_cn = max_pats if 'CN' in quals else 0
+            l_mac = max_pats if 'MAC' in quals else 0
             
             asp_lines.append(
                 f"operator({op_id}, {eff_time}, {is_pt}, {max_pats}, "
-                f"{limit_n}, {limit_n}, {limit_n}, {limit_n}, "
-                f"{limit_o}, {limit_o}, {limit_o}, {limit_o}, "
-                f"{limit_cp}, {limit_cn}, {limit_mac})."
+                f"{l_nlp}, {l_nl}, {l_n}, {l_np}, "
+                f"{l_olp}, {l_ol}, {l_o}, {l_op}, "
+                f"{l_cp}, {l_cn}, {l_mac})."
             )
         asp_lines.append("operator(-1, 100, 0, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100).")
 
@@ -95,7 +108,8 @@ def generate_board_baseline_facts(data_input, target_date, output_filename):
 
         # --- SESSIONI BASE ---
         asp_lines.append("\n% --- Sessioni Base ---")
-        seen_sessions = set()
+        pats_with_sessions = set()
+        
         for item in agenda:
             sess = item.get('session', {})
             pat = item.get('patient', {})
@@ -103,17 +117,26 @@ def generate_board_baseline_facts(data_input, target_date, output_filename):
             
             sess_id = sess.get('id')
             pat_id = pat.get('id')
-            if sess_id is None or sess_id in seen_sessions: continue
-            seen_sessions.add(sess_id)
+            if sess_id is None: continue
+            
+            pats_with_sessions.add(pat_id)
             
             min_len = sess.get('minLength', 60) // 10
             loc_str = str(sess.get('location', '1')).strip()
             loc = loc_str if loc_str.isdigit() else 1 
             typ = sess.get('type', 0)
             
-            
             asp_lines.append(f"session({sess_id}, {pat_id}, {min_len}, {loc}, {typ}).")
             asp_lines.append(f"session({sess_id}, {pat_id}, {min_len}, {loc}).")
+
+        for pat in all_patients:
+            pat_id = pat.get('id')
+            if pat_id and pat_id not in pats_with_sessions:
+                # Creiamo un ID sessione univoco fittizio basato sul paziente
+                dummy_sess_id = int(f"999{pat_id}")
+                min_len = pat.get('overallMinLength', 60) // 10
+                asp_lines.append(f"session({dummy_sess_id}, {pat_id}, {min_len}, 1, 0).")
+                asp_lines.append(f"session({dummy_sess_id}, {pat_id}, {min_len}, 1).")
 
     if output_filename:
         with open(output_filename, 'w', encoding='utf-8') as f:
@@ -190,7 +213,6 @@ def generate_agenda_facts(board_assignments, data_input, target_date, output_fil
         unassigned = doc.get('unassignedPatients', [])
         agenda = doc.get('agenda', [])
         
-        # --- PAZIENTI (patient/3) ---
         asp_lines.append("% --- Pazienti ---")
         pat_dict = {p.get('id'): p for p in doc.get('patients', []) + unassigned}
         for op in board:
@@ -199,9 +221,15 @@ def generate_agenda_facts(board_assignments, data_input, target_date, output_fil
                 
         for p_id, p in pat_dict.items():
             if p_id is None: continue
+            
+            if op_map.get(p_id, -1) == -1:
+                continue
+                
             aut = 1 if p.get('autonomous', False) else 0
-            min_time = p.get('overallMinLength', 60) // 10
-            asp_lines.append(f"patient({p_id}, {aut}, {min_time}).")
+            
+            raw_min = p.get('overallMinLength', 60)
+            pat_min_slots = (raw_min // 10) if raw_min <= 60 else 6 
+            asp_lines.append(f"patient({p_id}, {aut}, {pat_min_slots}).")
 
         # --- LOCATIONS E MACRO (location/5) ---
         asp_lines.append("\n% --- Locations ---")
@@ -219,7 +247,9 @@ def generate_agenda_facts(board_assignments, data_input, target_date, output_fil
                 
                 asp_lines.append(f"location({l_id}, {cap_morn}, 1, 0, 72).")
                 asp_lines.append(f"location({l_id}, {cap_aft}, 2, 72, 144).")
-                asp_lines.append(f"macroLocation({m_id}, {l_id}).")
+                
+                # [FIX]: NON stampare le macroLocation, o l'Agenda andrà in TIMEOUT per bilanciamento stanze
+                # asp_lines.append(f"macroLocation({m_id}, {l_id}).") 
 
         # --- TURNI OPERATORI (period/4 e time/3) ---
         asp_lines.append("\n% --- Turni Operatori ---")
@@ -248,7 +278,8 @@ def generate_agenda_facts(board_assignments, data_input, target_date, output_fil
 
         # --- SESSIONI CON ASSEGNAMENTO BOARD (session/11 e sessionLocation/3) ---
         asp_lines.append("\n% --- Sessioni ---")
-        seen_sessions = set()
+        pats_with_sessions = set()
+        
         for item in agenda:
             sess = item.get('session', {})
             pat = item.get('patient', {})
@@ -256,11 +287,11 @@ def generate_agenda_facts(board_assignments, data_input, target_date, output_fil
             
             sess_id = sess.get('id')
             pat_id = pat.get('id')
-            if sess_id is None or pat_id is None or sess_id in seen_sessions: continue
-            seen_sessions.add(sess_id)
+            if sess_id is None or pat_id is None: continue
+            pats_with_sessions.add(pat_id)
             
-            # OP ereditato dal Board (se non c'è, -1)
             op_id = op_map.get(pat_id, -1)
+            if op_id == -1: continue 
             
             loc_str = str(sess.get('location', '1')).strip().lower().replace('-', '_')
             loc = loc_str if loc_str else "1"
@@ -273,9 +304,22 @@ def generate_agenda_facts(board_assignments, data_input, target_date, output_fil
             pri = pat.get('category', {}).get('priority', 1)
             
             asp_lines.append(f"session({sess_id}, {pat_id}, {op_id}, {loc}, {typ}, {min_len}, {ideal_len}, {per}, {tim}, {opt}, {pri}).")
-            
             mac = str(item.get('macroLocationId', loc)).lower().replace('-', '_')
             asp_lines.append(f"sessionLocation({sess_id}, {loc}, {mac}).")
+
+        # [FIX 4] Sessioni di Agenda per gli Unassigned passati dal Board
+        for p_id, p in pat_dict.items():
+            if p_id and p_id not in pats_with_sessions:
+                op_id = op_map.get(p_id, -1)
+                if op_id == -1: continue # Resta a terra
+                
+                dummy_sess_id = int(f"999{p_id}")
+                min_len = p.get('overallMinLength', 60) // 10
+                pri = p.get('category', {}).get('priority', 1)
+                
+                # Forziamo parametri standard per permettere lo scheduling
+                asp_lines.append(f"session({dummy_sess_id}, {p_id}, {op_id}, 1, 0, {min_len}, {min_len}, 1, 0, 0, {pri}).")
+                asp_lines.append(f"sessionLocation({dummy_sess_id}, 1, 1).")
 
     if output_filename:
         with open(output_filename, 'w', encoding='utf-8') as f:
