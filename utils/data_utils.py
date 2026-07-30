@@ -3,12 +3,16 @@ import numpy as np
 import pandas as pd
 
 def process_raw_json(docs):
-    """Elabora una lista di dizionari JSON e restituisce il DataFrame raw."""
+    """Elabora una lista di dizionari JSON e restituisce il DataFrame raw con nuove feature."""
     docs = [docs] if isinstance(docs, dict) else docs
     dataset_rows = []
     
     for doc in docs:
-        planning_date_str = doc.get('planningDate', {}).get('$date')
+        planning_date_node = doc.get('planningDate') or {}
+        planning_date_str = planning_date_node.get('$date')
+        
+        organization = doc.get('organization', 'Unknown')
+        
         if not planning_date_str or not doc.get('agenda'):
             continue
             
@@ -21,20 +25,32 @@ def process_raw_json(docs):
         density_ratio = (len(unique_patients) / num_ops) if num_ops > 0 else np.nan
         
         for item in agenda:
-            operator = item.get('operator', {})
-            patient = item.get('patient', {})
+            operator = item.get('operator') or {}
+            patient = item.get('patient') or {}
+            
+            # Feature Paziente
             aid_needs = patient.get('aidNeeds')
             needs_lifter = 1 if pd.notnull(aid_needs) and str(aid_needs).lower() != 'none' else 0
+            
+            category = patient.get('category') or {}
+            priority = category.get('priority', np.nan)
+            
+            # Feature Operatore
+            effective_time = operator.get('effectiveTime', 0)
+            working_period = operator.get('workingPeriod', 'UNKNOWN')
                 
             dataset_rows.append({
+                'organization': organization,
                 'planning_date': planning_date,
                 'operator_id': operator.get('id'),
                 'op_jobKind': operator.get('jobKind'),
                 'op_burdenScore': operator.get('burdenScore'),
                 'op_qualifications_count': len(operator.get('qualifications', [])),
-                'op_has_CN': 1 if 'CN' in operator.get('qualifications', []) else 0,
+                'op_effectiveTime': effective_time,
+                'op_workingPeriod': working_period,
                 'density_ratio': density_ratio,
                 'needs_lifter': needs_lifter,
+                'patient_priority': priority,
                 
                 'target_assN': operator.get('assN', 0) or 0,
                 'target_assO': operator.get('assO', 0) or 0,
@@ -65,26 +81,31 @@ def extract_from_json(file_paths):
 def aggregate_to_operator_day(df):
     """
     Trasforma il dataset portandolo all'unità statistica 'Operatore-Giorno'.
-    Calcola le metriche di contesto aggregate.
+    Calcola le metriche di contesto aggregate, tenendo conto dell'organizzazione.
     """
     df = df.copy()
     
     # 1. Feature di contesto temporale
     df['day_of_week'] = df['planning_date'].dt.day_name()
     
-    # 2. Calcolo percentuale giornaliera sollevatori
-    daily_lifter = df.groupby('planning_date')['needs_lifter'].mean().reset_index(name='daily_lifter_ratio')
-    df = df.merge(daily_lifter, on='planning_date', how='left')
+    # 2. Calcolo percentuale giornaliera sollevatori (Raggruppando anche per clinica)
+    daily_metrics = df.groupby(['organization', 'planning_date']).agg(
+        daily_lifter_ratio=('needs_lifter', 'mean')
+    ).reset_index()
+    df = df.merge(daily_metrics, on=['organization', 'planning_date'], how='left')
     
     # 3. Aggregazione finale: una riga per ogni operatore in una specifica giornata
     agg_rules = {
         'op_jobKind': 'first',
         'op_burdenScore': 'first',
         'op_qualifications_count': 'first',
-        'op_has_CN': 'first',
+        'op_effectiveTime': 'first',
+        'op_workingPeriod': 'first',
+        'patient_priority': 'mean',
         'density_ratio': 'first',
         'daily_lifter_ratio': 'first',
         'day_of_week': 'first',
+        
         'target_assN': 'first',
         'target_assO': 'first',
         'target_assA': 'first',
@@ -94,7 +115,11 @@ def aggregate_to_operator_day(df):
         'target_assignments': 'first' 
     }
     
-    df_agg = df.groupby(['planning_date', 'operator_id'], as_index=False).agg(agg_rules)
+    # Includiamo 'organization' nelle chiavi primarie
+    df_agg = df.groupby(['organization', 'planning_date', 'operator_id'], as_index=False).agg(agg_rules)
+    
+    # Rinominiamo la colonna della priorità per maggiore chiarezza
+    df_agg.rename(columns={'patient_priority': 'avg_patient_priority'}, inplace=True)
     
     # Drop records senza operatore o con target nullo
     df_agg = df_agg.dropna(subset=['operator_id', 'target_assignments'])

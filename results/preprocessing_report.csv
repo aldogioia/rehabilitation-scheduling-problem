@@ -1,0 +1,20 @@
+Feature,Tipo (Pre),Mancanti (Pre),Valori Unici (Pre),Media/Min/Max (Pre),Tipo (Post),Mancanti (Post),Valori Unici (Post),Media/Min/Max (Post)
+avg_patient_priority,float64,0,142,8.19 / 3.0 / 15.0,float64,0,135,8.25 / 3.0 / 15.0
+daily_lifter_ratio,float64,0,82,0.05 / 0.0 / 0.13,float64,0,66,0.05 / 0.0 / 0.13
+day_of_week,str,0,5,-,int8,0,5,1.96 / 0 / 4
+density_ratio,float64,0,78,4.66 / 2.94 / 7.06,float64,0,65,4.7 / 2.94 / 7.06
+op_burdenScore,int64,0,8,3.91 / 2 / 11,int64,0,8,3.86 / 2 / 11
+op_effectiveTime,int64,0,20,323.74 / 140 / 480,int64,0,20,326.42 / 140 / 480
+op_jobKind,str,0,3,-,int8,0,3,0.41 / 0 / 2
+op_qualifications_count,int64,0,6,4.57 / 2 / 7,int64,0,6,4.6 / 2 / 7
+op_workingPeriod,str,1,3,-,int8,0,4,0.41 / 0 / 3
+operator_id,int64,0,45,189.62 / 29 / 614,int64,0,45,190.55 / 29 / 614
+organization,str,0,2,-,int8,0,2,0.43 / 0 / 1
+planning_date,datetime64[us],0,63,-,Scartata,Scartata,Scartata,Scartata / Scartata / Scartata
+target_assA,int64,0,1,0.0 / 0 / 0,Scartata,Scartata,Scartata,Scartata / Scartata / Scartata
+target_assCN,int64,0,1,0.0 / 0 / 0,Scartata,Scartata,Scartata,Scartata / Scartata / Scartata
+target_assCP,int64,0,1,0.0 / 0 / 0,Scartata,Scartata,Scartata,Scartata / Scartata / Scartata
+target_assMAC,int64,0,1,0.0 / 0 / 0,Scartata,Scartata,Scartata,Scartata / Scartata / Scartata
+target_assN,int64,0,5,1.06 / 0 / 4,int64,0,5,1.07 / 0 / 4
+target_assO,int64,0,5,1.75 / 0 / 4,int64,0,5,1.75 / 0 / 4
+target_assignments,int64,0,7,4.3 / 1 / 7,int64,0,7,4.32 / 1 / 7
